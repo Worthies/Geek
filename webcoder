@@ -333,13 +333,72 @@ setup_certbot() {
     print_info "SSL certificate obtained and configured successfully"
 }
 
+# Create systemd service for VS Code server
+create_vscode_service() {
+    print_info "Creating systemd service for VS Code server..."
+    
+    # Get the user who invoked sudo
+    REAL_USER="${SUDO_USER:-$USER}"
+    REAL_HOME=$(eval echo ~"$REAL_USER")
+    
+    # Create systemd service file
+    cat > /etc/systemd/system/vscode-server.service << EOF
+[Unit]
+Description=VS Code Server
+After=network.target
+
+[Service]
+Type=simple
+User=$REAL_USER
+WorkingDirectory=$REAL_HOME
+Environment="HOME=$REAL_HOME"
+ExecStart=$VSCODE_CLI_BIN serve-web --host 127.0.0.1 --port $PORT --without-connection-token --accept-server-license-terms
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    print_info "Systemd service created at /etc/systemd/system/vscode-server.service"
+}
+
 # Start VS Code server
 start_vscode_server() {
-    print_info "VS Code CLI is ready at: $VSCODE_CLI_BIN"
-    print_info "To start VS Code server, run:"
-    print_info "  $VSCODE_CLI_BIN tunnel --accept-server-license-terms"
+    print_info "Starting VS Code server..."
+    
+    # Create systemd service
+    create_vscode_service
+    
+    # Reload systemd daemon
+    systemctl daemon-reload
+    
+    # Enable service to start on boot
+    systemctl enable vscode-server.service
+    
+    # Start the service
+    if systemctl start vscode-server.service; then
+        print_info "VS Code server started successfully"
+        
+        # Wait a moment for service to start
+        sleep 3
+        
+        # Check status
+        if systemctl is-active --quiet vscode-server.service; then
+            print_info "VS Code server is running"
+        else
+            print_warn "VS Code server may not be running properly. Check with: systemctl status vscode-server.service"
+        fi
+    else
+        print_error "Failed to start VS Code server"
+        print_info "Check logs with: journalctl -u vscode-server.service -f"
+        exit 1
+    fi
+    
     print_info ""
-    print_info "The server will be accessible through nginx at:"
+    print_info "VS Code server is accessible through nginx at:"
     
     if [[ "$SECURE" == true ]]; then
         print_info "  https://$DOMAIN"
@@ -348,6 +407,13 @@ start_vscode_server() {
     else
         print_info "  http://$(get_server_ip)"
     fi
+    
+    print_info ""
+    print_info "Useful commands:"
+    print_info "  Check status: systemctl status vscode-server.service"
+    print_info "  View logs: journalctl -u vscode-server.service -f"
+    print_info "  Stop server: systemctl stop vscode-server.service"
+    print_info "  Restart server: systemctl restart vscode-server.service"
 }
 
 # Main function
