@@ -146,7 +146,7 @@ install_vscode_cli() {
     
     # Download to temporary file
     TMP_FILE=$(mktemp)
-    if ! curl -L "$VSCODE_URL" -o "$TMP_FILE" 2>/dev/null; then
+    if ! curl -f -L --connect-timeout 30 --max-time 300 "$VSCODE_URL" -o "$TMP_FILE"; then
         print_error "Failed to download VS Code CLI"
         rm -f "$TMP_FILE"
         exit 1
@@ -154,7 +154,7 @@ install_vscode_cli() {
     
     # Extract the CLI
     print_info "Extracting VS Code CLI..."
-    if [[ "$TMP_FILE" == *.tar.gz ]] || file "$TMP_FILE" | grep -q "gzip compressed"; then
+    if file "$TMP_FILE" | grep -q "gzip compressed"; then
         tar -xzf "$TMP_FILE" -C "$VSCODE_CLI_DIR"
     else
         # Try to extract as tar.gz anyway
@@ -207,7 +207,9 @@ install_nginx() {
 # Get server IP
 get_server_ip() {
     # Try to get public IP, fallback to local IP
-    IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
+    IP=$(curl -f -s --connect-timeout 10 --max-time 20 ifconfig.me 2>/dev/null || \
+         curl -f -s --connect-timeout 10 --max-time 20 icanhazip.com 2>/dev/null || \
+         hostname -I | awk '{print $1}')
     echo "$IP"
 }
 
@@ -254,7 +256,7 @@ EOF
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/vscode-server
     
     # Test nginx configuration
-    if ! nginx -t 2>/dev/null; then
+    if ! nginx -t; then
         print_error "nginx configuration test failed"
         exit 1
     fi
@@ -262,7 +264,14 @@ EOF
     print_info "nginx configured successfully"
     
     # Reload nginx
-    systemctl reload nginx 2>/dev/null || service nginx reload 2>/dev/null || nginx -s reload
+    if ! systemctl reload nginx 2>/dev/null; then
+        if ! service nginx reload 2>/dev/null; then
+            if ! nginx -s reload; then
+                print_error "Failed to reload nginx"
+                exit 1
+            fi
+        fi
+    fi
     
     print_info "nginx reloaded"
 }
@@ -299,14 +308,27 @@ setup_certbot() {
     print_info "Running certbot to obtain SSL certificate..."
     print_warn "Make sure your domain $DOMAIN points to this server's IP address"
     
+    # Prompt for email if not provided
+    read -p "Enter email address for Let's Encrypt notifications (press Enter to skip): " CERTBOT_EMAIL
+    
     # Run certbot
-    certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email || {
-        print_error "Certbot configuration failed. Please ensure:"
-        print_error "  1. Domain $DOMAIN points to this server"
-        print_error "  2. Port 80 and 443 are open"
-        print_error "  3. You have a valid email or remove --register-unsafely-without-email"
-        exit 1
-    }
+    if [[ -n "$CERTBOT_EMAIL" ]]; then
+        certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$CERTBOT_EMAIL" || {
+            print_error "Certbot configuration failed. Please ensure:"
+            print_error "  1. Domain $DOMAIN points to this server"
+            print_error "  2. Port 80 and 443 are open"
+            print_error "  3. Email address is valid"
+            exit 1
+        }
+    else
+        print_warn "Proceeding without email (not recommended for production)"
+        certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email || {
+            print_error "Certbot configuration failed. Please ensure:"
+            print_error "  1. Domain $DOMAIN points to this server"
+            print_error "  2. Port 80 and 443 are open"
+            exit 1
+        }
+    fi
     
     print_info "SSL certificate obtained and configured successfully"
 }
