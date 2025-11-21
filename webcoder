@@ -27,7 +27,7 @@ get_real_user_info
 # Generate or read authentication token
 TOKEN_FILE="$REAL_HOME/.vscode/cli/token"
 if [[ ! -s "$TOKEN_FILE" ]]; then
-    TOKEN=$(date +%s%N | sha512sum | awk '{print $1}')
+    TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | cut -c1-64)
     mkdir -p "$(dirname "$TOKEN_FILE")"
     echo "$TOKEN" > "$TOKEN_FILE"
 else
