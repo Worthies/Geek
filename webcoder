@@ -24,7 +24,17 @@ get_real_user_info() {
 # Initialize user info
 get_real_user_info
 
-VSCODE_CLI_DIR="$REAL_HOME/.vscode-cli"
+# Generate or read authentication token
+TOKEN_FILE="$REAL_HOME/.vscode/cli/token"
+if [[ ! -s "$TOKEN_FILE" ]]; then
+    TOKEN=$(date +%s%N | sha512sum | awk '{print $1}')
+    mkdir -p "$(dirname "$TOKEN_FILE")"
+    echo "$TOKEN" > "$TOKEN_FILE"
+else
+    TOKEN=$(cat "$TOKEN_FILE")
+fi
+
+VSCODE_CLI_DIR="$REAL_HOME/.vscode/cli"
 VSCODE_CLI_BIN="$VSCODE_CLI_DIR/code"
 
 # Color codes for output
@@ -109,7 +119,7 @@ check_sudo() {
 detect_system() {
     OS=$(uname -s | tr '[:upper:]' '[:lower:]')
     ARCH=$(uname -m)
-    
+
     case $ARCH in
         x86_64)
             ARCH="x64"
@@ -125,10 +135,10 @@ detect_system() {
             exit 1
             ;;
     esac
-    
+
     case $OS in
         linux)
-            OS="linux"
+            OS="alpine"
             ;;
         darwin)
             OS="darwin"
@@ -138,27 +148,28 @@ detect_system() {
             exit 1
             ;;
     esac
-    
+
     print_info "Detected system: $OS-$ARCH"
 }
 
 # Download and install VS Code CLI
 install_vscode_cli() {
     print_info "Checking VS Code CLI installation..."
-    
+
     if [[ -f "$VSCODE_CLI_BIN" ]]; then
         print_info "VS Code CLI already installed at $VSCODE_CLI_BIN"
         return 0
     fi
-    
+
     print_info "Downloading VS Code CLI..."
     mkdir -p "$VSCODE_CLI_DIR"
-    
+
     # Download URL for VS Code CLI
+    # Such as https://code.visualstudio.com/sha/download?build=stable&os=cli-alpine-x64
     VSCODE_URL="https://code.visualstudio.com/sha/download?build=stable&os=cli-${OS}-${ARCH}"
-    
+
     print_info "Downloading from: $VSCODE_URL"
-    
+
     # Download to temporary file
     TMP_FILE=$(mktemp)
     if ! curl -f -L --connect-timeout 30 --max-time 300 "$VSCODE_URL" -o "$TMP_FILE"; then
@@ -166,7 +177,7 @@ install_vscode_cli() {
         rm -f "$TMP_FILE"
         exit 1
     fi
-    
+
     # Extract the CLI
     print_info "Extracting VS Code CLI..."
     if file "$TMP_FILE" | grep -q "gzip compressed"; then
@@ -179,26 +190,26 @@ install_vscode_cli() {
             exit 1
         }
     fi
-    
+
     rm -f "$TMP_FILE"
-    
+
     # Make executable
     chmod +x "$VSCODE_CLI_BIN"
-    
+
     print_info "VS Code CLI installed successfully at $VSCODE_CLI_BIN"
 }
 
 # Install nginx
 install_nginx() {
     print_info "Checking nginx installation..."
-    
+
     if command -v nginx &> /dev/null; then
         print_info "nginx is already installed"
         return 0
     fi
-    
+
     print_info "Installing nginx..."
-    
+
     # Detect package manager and install
     if command -v apt-get &> /dev/null; then
         apt-get update -qq
@@ -215,7 +226,7 @@ install_nginx() {
         print_error "Could not detect package manager. Please install nginx manually."
         exit 1
     fi
-    
+
     print_info "nginx installed successfully"
 }
 
@@ -231,7 +242,7 @@ get_server_ip() {
 # Configure nginx
 configure_nginx() {
     print_info "Configuring nginx..."
-    
+
     # Determine server name
     if [[ -z "$DOMAIN" ]]; then
         SERVER_NAME=$(get_server_ip)
@@ -240,20 +251,23 @@ configure_nginx() {
         SERVER_NAME="$DOMAIN"
         print_info "Using domain: $SERVER_NAME"
     fi
-    
+
     # Create nginx configuration
     NGINX_CONF="/etc/nginx/sites-available/vscode-server"
-    
+
     # Create sites-available and sites-enabled directories if they don't exist
     mkdir -p /etc/nginx/sites-available
     mkdir -p /etc/nginx/sites-enabled
-    
+
     cat > "$NGINX_CONF" << EOF
 server {
     listen 80;
     server_name $SERVER_NAME;
-    
+
     location / {
+        if (\$http_cookie !~* "tkn=$TOKEN") {
+            return 401;
+        }
         proxy_pass http://127.0.0.1:$PORT;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -266,18 +280,18 @@ server {
     }
 }
 EOF
-    
+
     # Enable the site
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/vscode-server
-    
+
     # Test nginx configuration
     if ! nginx -t; then
         print_error "nginx configuration test failed"
         exit 1
     fi
-    
+
     print_info "nginx configured successfully"
-    
+
     # Reload nginx
     if ! systemctl reload nginx 2>/dev/null; then
         if ! service nginx reload 2>/dev/null; then
@@ -287,7 +301,7 @@ EOF
             fi
         fi
     fi
-    
+
     print_info "nginx reloaded"
 }
 
@@ -297,14 +311,14 @@ setup_certbot() {
         print_info "Skipping certbot setup (not requested)"
         return 0
     fi
-    
+
     if [[ -z "$DOMAIN" ]]; then
         print_error "Cannot use certbot without a domain name. Please specify -d option."
         exit 1
     fi
-    
+
     print_info "Installing certbot..."
-    
+
     # Install certbot
     if command -v apt-get &> /dev/null; then
         apt-get update -qq
@@ -319,13 +333,14 @@ setup_certbot() {
         print_error "Could not detect package manager. Please install certbot manually."
         exit 1
     fi
-    
+
     print_info "Running certbot to obtain SSL certificate..."
     print_warn "Make sure your domain $DOMAIN points to this server's IP address"
-    
+
     # Prompt for email if not provided
-    read -p "Enter email address for Let's Encrypt notifications (press Enter to skip): " CERTBOT_EMAIL
-    
+    # read -p "Enter email address for Let's Encrypt notifications (press Enter to skip): " CERTBOT_EMAIL
+    CERTBOT_EMAIL="webcoder@example.com"
+
     # Run certbot
     if [[ -n "$CERTBOT_EMAIL" ]]; then
         certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$CERTBOT_EMAIL" || {
@@ -344,17 +359,16 @@ setup_certbot() {
             exit 1
         }
     fi
-    
+
     print_info "SSL certificate obtained and configured successfully"
 }
 
 # Create systemd service for VS Code server
 create_vscode_service() {
     print_info "Creating systemd service for VS Code server..."
-    
-    print_warn "Note: VS Code server will run without authentication token"
-    print_warn "Access is restricted to localhost (127.0.0.1) and protected by nginx"
-    
+
+    print_info "VS Code server will use cookie-based authentication for security"
+
     # Create systemd service file
     cat > /etc/systemd/system/vscode-server.service << EOF
 [Unit]
@@ -382,23 +396,23 @@ EOF
 # Start VS Code server
 start_vscode_server() {
     print_info "Starting VS Code server..."
-    
+
     # Create systemd service
     create_vscode_service
-    
+
     # Reload systemd daemon
     systemctl daemon-reload
-    
+
     # Enable service to start on boot
     systemctl enable vscode-server.service
-    
+
     # Start the service
     if systemctl start vscode-server.service; then
         print_info "VS Code server started successfully"
-        
+
         # Wait a moment for service to start
         sleep 3
-        
+
         # Check status
         if systemctl is-active --quiet vscode-server.service; then
             print_info "VS Code server is running"
@@ -410,10 +424,10 @@ start_vscode_server() {
         print_info "Check logs with: journalctl -u vscode-server.service -f"
         exit 1
     fi
-    
+
     print_info ""
     print_info "VS Code server is accessible through nginx at:"
-    
+
     if [[ "$SECURE" == true ]]; then
         print_info "  https://$DOMAIN"
     elif [[ -n "$DOMAIN" ]]; then
@@ -421,7 +435,16 @@ start_vscode_server() {
     else
         print_info "  http://$(get_server_ip)"
     fi
-    
+
+    print_info ""
+    print_info "Authentication Token: $TOKEN"
+    print_info "To access the server, you need to set a browser cookie:"
+    print_info "  Name: tkn"
+    print_info "  Value: $TOKEN"
+    print_info "  Domain: ${SERVER_NAME}"
+    print_info ""
+    print_info "In browser developer tools console, run:"
+    print_info "  document.cookie = 'tkn=$TOKEN; path=/; domain=$SERVER_NAME'"
     print_info ""
     print_info "Useful commands:"
     print_info "  Check status: systemctl status vscode-server.service"
@@ -433,14 +456,14 @@ start_vscode_server() {
 # Main function
 main() {
     print_info "Starting VS Code Server setup..."
-    
+
     parse_args "$@"
-    
+
     print_info "Configuration:"
     print_info "  Port: $PORT"
     print_info "  Domain: ${DOMAIN:-<use IP>}"
     print_info "  Secure: $SECURE"
-    
+
     check_sudo
     detect_system
     install_vscode_cli
@@ -448,7 +471,7 @@ main() {
     configure_nginx
     setup_certbot
     start_vscode_server
-    
+
     print_info "Setup completed successfully!"
 }
 
