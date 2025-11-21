@@ -54,9 +54,16 @@ sudo ./webcoder -p 8000 -d example.com -s
 1. Downloads and installs VS Code CLI to `~/.vscode-cli/`
 2. Installs nginx web server
 3. Configures nginx as a reverse proxy to VS Code server
-4. Creates a systemd service for VS Code server
-5. Starts VS Code server automatically
+4. Creates a systemd service that runs `code serve-web`
+5. Starts VS Code server automatically on localhost
 6. (Optional) Configures SSL/TLS certificates with certbot
+
+### Security Notes
+
+- VS Code server runs on localhost (127.0.0.1) only and is not directly accessible from the internet
+- nginx acts as a reverse proxy, providing the external access point
+- The server runs without authentication token (suitable for single-user setups behind nginx)
+- For production use, consider adding authentication at the nginx level
 
 ### Service Management
 
