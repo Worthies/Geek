@@ -9,7 +9,22 @@ set -e
 PORT=8000
 DOMAIN=""
 SECURE=false
-VSCODE_CLI_DIR="$HOME/.vscode-cli"
+
+# Get real user info early (before we use sudo)
+get_real_user_info() {
+    if [[ -n "$SUDO_USER" ]]; then
+        REAL_USER="$SUDO_USER"
+        REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+    else
+        REAL_USER="$USER"
+        REAL_HOME="$HOME"
+    fi
+}
+
+# Initialize user info
+get_real_user_info
+
+VSCODE_CLI_DIR="$REAL_HOME/.vscode-cli"
 VSCODE_CLI_BIN="$VSCODE_CLI_DIR/code"
 
 # Color codes for output
@@ -337,9 +352,8 @@ setup_certbot() {
 create_vscode_service() {
     print_info "Creating systemd service for VS Code server..."
     
-    # Get the user who invoked sudo
-    REAL_USER="${SUDO_USER:-$USER}"
-    REAL_HOME=$(eval echo ~"$REAL_USER")
+    print_warn "Note: VS Code server will run without authentication token"
+    print_warn "Access is restricted to localhost (127.0.0.1) and protected by nginx"
     
     # Create systemd service file
     cat > /etc/systemd/system/vscode-server.service << EOF
