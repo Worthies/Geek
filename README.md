@@ -13,6 +13,24 @@ A bash script to set up VS Code Server with nginx reverse proxy.
 - Optionally configures SSL/TLS using certbot
 - Supports custom port, domain, and security settings
 
+### Installation
+
+#### One-line installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Worthies/Geek/master/webcoder | sudo bash -s -- [OPTIONS]
+```
+
+#### Manual installation
+
+Download the script and run it:
+
+```bash
+wget https://raw.githubusercontent.com/Worthies/Geek/master/webcoder
+chmod +x webcoder
+sudo ./webcoder [OPTIONS]
+```
+
 ### Usage
 
 ```bash
@@ -51,9 +69,9 @@ sudo ./webcoder -p 8000 -d example.com -s
 
 ### What the script does
 
-1. Downloads and installs VS Code CLI to `~/.vscode-cli/`
+1. Downloads and installs VS Code CLI to `~/.vscode/cli/`
 2. Installs nginx web server
-3. Configures nginx as a reverse proxy to VS Code server
+3. Configures nginx as a reverse proxy to VS Code server with cookie-based authentication
 4. Creates a systemd service that runs `code serve-web`
 5. Starts VS Code server automatically on localhost
 6. (Optional) Configures SSL/TLS certificates with certbot
@@ -61,9 +79,9 @@ sudo ./webcoder -p 8000 -d example.com -s
 ### Security Notes
 
 - VS Code server runs on localhost (127.0.0.1) only and is not directly accessible from the internet
-- nginx acts as a reverse proxy, providing the external access point
-- The server runs without authentication token (suitable for single-user setups behind nginx)
-- For production use, consider adding authentication at the nginx level
+- nginx acts as a reverse proxy, providing the external access point with cookie-based authentication
+- Access requires setting a browser cookie with the generated SHA512 token
+- Suitable for secure single-user setups behind nginx
 
 ### Service Management
 
